@@ -1,245 +1,282 @@
+/*
+Kotlin Specification DSL
+https://github.com/kuler90/jpa-spec-kotlin
+
+MIT License
+Copyright (c) 2020 Kulesha Roman
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
 
 import org.springframework.data.jpa.domain.Specification
-import org.springframework.data.jpa.domain.Specifications
-import java.util.*
 import javax.persistence.criteria.*
 import kotlin.reflect.KProperty1
 
-// Path operators
+// Path extensions
+fun <T, R> KProperty1<T, R?>.path(): FieldPath<T, R?> = FieldPath(this)
+infix fun <T, R, R2> KProperty1<T, R?>.join(field: KProperty1<R, R2?>): FieldPath<T, R2?> = FieldPath(field, this.path())
+infix fun <T, R, R2> FieldPath<T, R?>.join(field: KProperty1<R, R2?>): FieldPath<T, R2?> = FieldPath(field,this)
+@JvmName("plusCollection")
+infix fun <T, E, R: Collection<E>, R2> KProperty1<T, R>.join(field: KProperty1<E, R2?>): FieldPath<T, R2?> = FieldPath(field, this.path())
+@JvmName("plusCollection")
+infix fun <T, E, R: Collection<E>, R2> FieldPath<T, R?>.join(field: KProperty1<E, R2?>): FieldPath<T, R2?> = FieldPath(field, this)
 
-operator fun <T, R, R2> KProperty1<T, R?>.plus(prop: KProperty1<R, R2?>): Spec.FieldPath<T, R2?> = Spec.FieldPath(prop.name, from = Spec.FieldPath<T, R?>(this.name))
-operator fun <T, R, R2> Spec.FieldPath<T, R?>.plus(prop: KProperty1<R, R2?>): Spec.FieldPath<T, R2?> = Spec.FieldPath(prop.name, from = this)
-@JvmName("plusRel")
-operator fun <T, E, R: Collection<E>, R2> KProperty1<T, R>.plus(prop: KProperty1<E, R2?>): Spec.FieldPath<T, R2?> = Spec.FieldPath(prop.name, from = Spec.FieldPath<T, R?>(this.name))
-@JvmName("plusRel")
-operator fun <T, E, R: Collection<E>, R2> Spec.FieldPath<T, R?>.plus(prop: KProperty1<E, R2?>): Spec.FieldPath<T, R2?> = Spec.FieldPath(prop.name, from = this)
+// Concat extensions
+infix fun <T> String.concat(field: KProperty1<T, String?>): FieldConcat<T> = FieldConcat<T>().concat(this).concat(field)
+infix fun <T> String.concat(path: FieldPath<T, String?>): FieldConcat<T> = FieldConcat<T>().concat(this).concat(path)
+infix fun <T> String.concat(expr: Expression<String?>): FieldConcat<T> = FieldConcat<T>().concat(this).concat(expr)
+infix fun <T> KProperty1<T, String?>.concat(text: String): FieldConcat<T> = FieldConcat<T>().concat(this).concat(text)
+infix fun <T> KProperty1<T, String?>.concat(field: KProperty1<T, String?>): FieldConcat<T> = FieldConcat<T>().concat(this).concat(field)
+infix fun <T> KProperty1<T, String?>.concat(path: FieldPath<T, String?>): FieldConcat<T> = FieldConcat<T>().concat(this).concat(path)
+infix fun <T> KProperty1<T, String?>.concat(expr: Expression<String?>): FieldConcat<T> = FieldConcat<T>().concat(this).concat(expr)
+infix fun <T> FieldPath<T, String?>.concat(text: String): FieldConcat<T> = FieldConcat<T>().concat(this).concat(text)
+infix fun <T> FieldPath<T, String?>.concat(field: KProperty1<T, String?>): FieldConcat<T> = FieldConcat<T>().concat(this).concat(field)
+infix fun <T> FieldPath<T, String?>.concat(path: FieldPath<T, String?>): FieldConcat<T> = FieldConcat<T>().concat(this).concat(path)
+infix fun <T> FieldPath<T, String?>.concat(expr: Expression<String?>): FieldConcat<T> = FieldConcat<T>().concat(this).concat(expr)
+infix fun <T> Expression<String?>.concat(text: String): FieldConcat<T> = FieldConcat<T>().concat(this).concat(text)
+infix fun <T> Expression<String?>.concat(field: KProperty1<T, String?>): FieldConcat<T> = FieldConcat<T>().concat(this).concat(field)
+infix fun <T> Expression<String?>.concat(path: FieldPath<T, String?>): FieldConcat<T> = FieldConcat<T>().concat(this).concat(path)
+infix fun <T> Expression<String?>.concat(expr: Expression<String?>): FieldConcat<T> = FieldConcat<T>().concat(this).concat(expr)
 
 object Spec {
 
-    inline fun <reified T> empty(): Specification<T> = Specifications.where<T>(null)
+    fun <T> empty(): Specification<T> = predicate { null }
 
-    fun <T> not(spec: Specification<T>): Specification<T> = Specifications.not(spec)
+    fun <T> predicate(enabled: Boolean = true, builder: CriteriaContext<T>.() -> Predicate?): Specification<T> {
+        return Specification { root, query, cb -> if (enabled) CriteriaContext<T>(root, query, cb).builder() else null }
+    }
 
     fun <T> and(vararg specs: Specification<T>): Specification<T> {
-       return specs.fold(Specifications.where<T>(null)) { acc, next -> acc.and(next) }
+        return specs.fold(empty()) { acc, next -> acc.and(next)!! }
     }
 
     fun <T> or(vararg specs: Specification<T>): Specification<T> {
-        return specs.fold(Specifications.where<T>(null)) { acc, next -> acc.or(next) }
+        return specs.fold(empty()) { acc, next -> acc.or(next)!! }
     }
 
-    // Path builder
+    fun <T> not(spec: Specification<T>): Specification<T> = Specification.not(spec)
 
-    fun <T, R> path(prop: KProperty1<T, R?>): FieldPath<T, R?> = FieldPath(prop.name)
+    fun <T> fetch(vararg fields: KProperty1<T, *>): Specification<T> = predicate { fields.forEach { fetch(it) }; null }
+    fun <T> fetch(vararg paths: FieldPath<T, *>): Specification<T> = predicate { paths.forEach { fetch(it) }; null }
 
-    // Concat builder
+    // Any type specifications
 
-    fun <T> concat(vararg props: KProperty1<T, String?>) = FieldConcat<T>().concat(*props)
-    fun <T> concat(vararg fields: FieldPath<T, String?>) = FieldConcat<T>().concat(*fields)
-    fun <T> concat(text: String) = FieldConcat<T>().concat(text)
+    fun <T, R> isNull(field: KProperty1<T, R?>) = isNull(field.path())
+    fun <T, R> isNull(path: FieldPath<T, R?>): Specification<T> = predicate { isNull(expr(path)) }
 
-    // Fetch specification
-
-    fun <T, R> fetch(vararg props: KProperty1<T, R?>): Specification<T> {
-        return fetch(*props.map { path(it) }.toTypedArray())
+    fun <T, R> equal(field: KProperty1<T, R?>, value: R?, nullable: Boolean = false) = equal(field.path(), value, nullable)
+    fun <T, R> equal(path: FieldPath<T, R?>, value: R?, nullable: Boolean = false): Specification<T> {
+        return predicate(value != null || nullable) { equal(expr(path), value) }
     }
 
-    fun <T, R> fetch(vararg fields: FieldPath<T, R?>): Specification<T> {
-        return Specification { root, query, _ ->
-            // skip fetch for count query
-            if (query.resultType != java.lang.Long::class.java && query.resultType != java.lang.Long::class.javaPrimitiveType) {
-                fields.forEach { it.fetch(root) }
-            }
-            null
-        }
-    }
-
-    // Any type specification
-
-    fun <T, R> isNull(prop: KProperty1<T, R?>) = isNull(path(prop))
-    fun <T, R> isNull(path: FieldPath<T, R?>): Specification<T> = custom(path) { isNull(it) }
-
-    fun <T, R> equal(prop: KProperty1<T, R?>, value: R?, checkNull: Boolean = false) = equal(path(prop), value, checkNull)
-    fun <T, R> equal(path: FieldPath<T, R?>, value: R?, checkNull: Boolean = false): Specification<T> {
-        return custom(path, value != null || checkNull) { equal(it, value) }
-    }
-
-    fun <T, R> memberOf(prop: KProperty1<T, R?>, values: Collection<R>?) = memberOf(path(prop), values)
+    fun <T, R> memberOf(field: KProperty1<T, R?>, values: Collection<R>?) = memberOf(field.path(), values)
     fun <T, R> memberOf(path: FieldPath<T, R?>, values: Collection<R>?): Specification<T> {
-        return custom(path, values?.isNotEmpty() ?: false) { it.`in`(values) }
+        return predicate(values?.isNotEmpty() ?: false) { expr(path).`in`(values) }
     }
 
-    // Comparable type specification
+    // Comparable type specifications
 
-    fun <T, R: Comparable<R>> lessThan(prop: KProperty1<T, R?>, value: R?) = lessThan(path(prop), value)
+    fun <T, R: Comparable<R>> lessThan(field: KProperty1<T, R?>, value: R?) = lessThan(field.path(), value)
     fun <T, R: Comparable<R>> lessThan(path: FieldPath<T, R?>, value: R?): Specification<T> {
-        return custom(path, value != null) { lessThan<R>(it, value) }
+        return predicate(value != null) { lessThan<R>(expr(path), value) }
     }
 
-    fun <T, R: Comparable<R>> lessThanOrEqualTo(prop: KProperty1<T, R?>, value: R?) = lessThanOrEqualTo(path(prop), value)
+    fun <T, R: Comparable<R>> lessThanOrEqualTo(field: KProperty1<T, R?>, value: R?) = lessThanOrEqualTo(field.path(), value)
     fun <T, R: Comparable<R>> lessThanOrEqualTo(path: FieldPath<T, R?>, value: R?): Specification<T> {
-        return custom(path, value != null) { lessThanOrEqualTo<R>(it, value) }
+        return predicate(value != null) { lessThanOrEqualTo<R>(expr(path), value) }
     }
 
-    fun <T, R: Comparable<R>> greaterThan(prop: KProperty1<T, R?>, value: R?) = greaterThan(path(prop), value)
+    fun <T, R: Comparable<R>> greaterThan(field: KProperty1<T, R?>, value: R?) = greaterThan(field.path(), value)
     fun <T, R: Comparable<R>> greaterThan(path: FieldPath<T, R?>, value: R?): Specification<T> {
-        return custom(path, value != null) { greaterThan<R>(it, value) }
+        return predicate(value != null) { greaterThan<R>(expr(path), value) }
     }
 
-    fun <T, R: Comparable<R>> greaterThanOrEqualTo(prop: KProperty1<T, R?>, value: R?) = greaterThanOrEqualTo(path(prop), value)
+    fun <T, R: Comparable<R>> greaterThanOrEqualTo(field: KProperty1<T, R?>, value: R?) = greaterThanOrEqualTo(field.path(), value)
     fun <T, R: Comparable<R>> greaterThanOrEqualTo(path: FieldPath<T, R?>, value: R?): Specification<T> {
-        return custom(path, value != null) { greaterThanOrEqualTo<R>(it, value) }
+        return predicate(value != null) { greaterThanOrEqualTo<R>(expr(path), value) }
     }
 
-    fun <T, R: Comparable<R>> between(prop: KProperty1<T, R?>, value1: R?, value2: R?) = between(path(prop), value1, value2)
+    fun <T, R: Comparable<R>> between(field: KProperty1<T, R?>, value1: R?, value2: R?) = between(field.path(), value1, value2)
     fun <T, R: Comparable<R>> between(path: FieldPath<T, R?>, value1: R?, value2: R?): Specification<T> {
-        return custom(path, value1 != null && value2 != null) { between<R>(it, value1, value2) }
+        return predicate(value1 != null && value2 != null) { between<R>(expr(path), value1, value2) }
     }
 
-    // Collection type specification
+    // Collection type specifications
 
-    fun <T, R : Collection<*>> isEmpty(prop: KProperty1<T, R?>) = isEmpty(path(prop))
+    fun <T, R : Collection<*>> isEmpty(field: KProperty1<T, R?>) = isEmpty(field.path())
     fun <T, R : Collection<*>> isEmpty(path: FieldPath<T, R?>): Specification<T> {
-        return custom(path) { isEmpty(it) }
+        return predicate { isEmpty(expr(path)) }
     }
 
-    fun <T, E, R : Collection<E>> contains(prop: KProperty1<T, R?>, value: E?) = contains(path(prop), value)
+    fun <T, E, R : Collection<E>> contains(field: KProperty1<T, R?>, value: E?) = contains(field.path(), value)
     fun <T, E, R : Collection<E>> contains(path: FieldPath<T, R?>, value: E?): Specification<T> {
-        return custom(path, value != null) { isMember(value, it) }
+        return predicate(value != null) { isMember(value, expr(path)) }
     }
 
-    // String type specification
+    // String type specifications
 
-    fun <T> like(prop: KProperty1<T, String?>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false) = like(path(prop), value, wildcardSpaces, caseSensitive)
+    fun <T> like(field: KProperty1<T, String?>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false): Specification<T> {
+        return like(field.path(), value, wildcardSpaces, caseSensitive)
+    }
     fun <T> like(path: FieldPath<T, String?>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false): Specification<T> {
-        return custom(path, !value.isNullOrBlank()) {
-            val likeValue = if (wildcardSpaces) {
-                value!!.replace("\\s+".toRegex(), " ").replace(" ", "%")
-            } else {
-                value!!
-            }
+        return predicate(value != null) {
+            val likeValue = if (wildcardSpaces) value!!.replace("\\s+".toRegex(), "%") else value!!
             if (caseSensitive)
-                like(it, likeValue)
+                like(expr(path), likeValue)
             else
-                like(lower(it), likeValue.toLowerCase())
+                like(lower(expr(path)), likeValue.toLowerCase())
         }
     }
     fun <T> like(concat: FieldConcat<T>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false): Specification<T> {
-        return custom(!value.isNullOrBlank()) { root ->
-            val likeValue = if (wildcardSpaces) {
-                value!!.replace("\\s+".toRegex(), " ").replace(" ", "%")
-            } else {
-                value!!
-            }
-            val concatExpr: Expression<String?>? = concat.build(root, this)
+        return predicate(value != null) {
+            val likeValue = if (wildcardSpaces) value!!.replace("\\s+".toRegex(), "%") else value!!
             if (caseSensitive)
-                like(concatExpr, likeValue)
+                like(expr(concat), likeValue)
             else
-                like(lower(concatExpr), likeValue.toLowerCase())
-
+                like(lower(expr(concat)), likeValue.toLowerCase())
         }
     }
 
-    fun <T> startsWith(prop: KProperty1<T, String?>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false) = startsWith(path(prop), value, wildcardSpaces, caseSensitive)
-    fun <T> startsWith(path: FieldPath<T, String?>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false) = like(path, value?.let { it + "%" }, wildcardSpaces, caseSensitive)
-    fun <T> startsWith(concat: FieldConcat<T>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false) = like(concat, value?.let { it + "%" }, wildcardSpaces, caseSensitive)
-
-    fun <T> endsWith(prop: KProperty1<T, String?>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false) = endsWith(path(prop), value, wildcardSpaces, caseSensitive)
-    fun <T> endsWith(path: FieldPath<T, String?>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false) = like(path, value?.let { "%" + it }, wildcardSpaces, caseSensitive)
-    fun <T> endsWith(concat: FieldConcat<T>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false) = like(concat, value?.let { "%" + it }, wildcardSpaces, caseSensitive)
-
-    fun <T> contains(prop: KProperty1<T, String?>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false) = contains(path(prop), value, wildcardSpaces, caseSensitive)
-    fun <T> contains(path: FieldPath<T, String?>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false) = like(path, value?.let { "%" + it + "%" }, wildcardSpaces, caseSensitive)
-    fun <T> contains(concat: FieldConcat<T>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false) = like(concat, value?.let { "%" + it + "%" }, wildcardSpaces, caseSensitive)
-
-    // Custom specification
-
-    fun <T, R> custom(path: FieldPath<T, R?>, condition: Boolean = true, makePredicate: CriteriaBuilder.(Path<R?>) -> Predicate): Specification<T> {
-        return Specification { root, _, cb -> if (condition) cb.makePredicate(path.get(root)) else null }
+    fun <T> startsWith(field: KProperty1<T, String?>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false): Specification<T> {
+        return startsWith(field.path(), value, wildcardSpaces, caseSensitive)
+    }
+    fun <T> startsWith(path: FieldPath<T, String?>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false): Specification<T> {
+        return like(path, value?.let { it + "%" }, wildcardSpaces, caseSensitive)
+    }
+    fun <T> startsWith(concat: FieldConcat<T>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false): Specification<T> {
+        return like(concat, value?.let { it + "%" }, wildcardSpaces, caseSensitive)
     }
 
-    fun <T> custom(condition: Boolean = true, makePredicate: CriteriaBuilder.(Root<T>) -> Predicate?): Specification<T> {
-        return Specification { root, _, cb -> if (condition) cb.makePredicate(root) else null }
+    fun <T> endsWith(field: KProperty1<T, String?>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false): Specification<T> {
+        return endsWith(field.path(), value, wildcardSpaces, caseSensitive)
+    }
+    fun <T> endsWith(path: FieldPath<T, String?>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false): Specification<T> {
+        return like(path, value?.let { "%" + it }, wildcardSpaces, caseSensitive)
+    }
+    fun <T> endsWith(concat: FieldConcat<T>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false): Specification<T> {
+        return like(concat, value?.let { "%" + it }, wildcardSpaces, caseSensitive)
     }
 
-    // Helpers
+    fun <T> contains(field: KProperty1<T, String?>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false): Specification<T> {
+        return contains(field.path(), value, wildcardSpaces, caseSensitive)
+    }
+    fun <T> contains(path: FieldPath<T, String?>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false): Specification<T> {
+        return like(path, value?.let { "%" + it + "%" }, wildcardSpaces, caseSensitive)
+    }
+    fun <T> contains(concat: FieldConcat<T>, value: String?, wildcardSpaces: Boolean = false, caseSensitive: Boolean = false): Specification<T> {
+        return like(concat, value?.let { "%" + it + "%" }, wildcardSpaces, caseSensitive)
+    }
+}
 
-    private val SHARED_JOINS_CACHE: MutableMap<Root<*>, MutableMap<Path<*>, From<*, *>>> = Collections.synchronizedMap(WeakHashMap())
+class CriteriaContext<T>(val root: Root<T>, val query: CriteriaQuery<*>, cb: CriteriaBuilder): CriteriaBuilder by cb {
 
-    class FieldPath<T, R>(field: String, from: FieldPath<T, *>? = null) {
+    fun <T, R> expr(field: KProperty1<T, R?>): Expression<R?> = expr(FieldPath<T, R?>(field))
 
-        private val fields: List<String> = from?.fields.orEmpty() + field
+    fun <T, R> expr(path: FieldPath<T, R>): Expression<R?> {
+        var from: From<*, *> = root
+        for (field in path.fields.dropLast(1)) {
+            from = from.fetches.find { it.attribute.name == field } as From<*, *>?
+                    ?: from.joins.find { it.attribute.name == field } as From<*, *>?
+                            ?: from.join<Any, Any>(field) as From<*, *>
+        }
+        return from.get(path.fields.last())
+    }
 
-        fun get(root: Root<T>): Path<R> {
-            val joinsCache = SHARED_JOINS_CACHE.getOrPut(root) { mutableMapOf() }
+    fun <T> expr(concat: FieldConcat<T>): Expression<String?>? {
+
+        fun <T2> ConcatItem<T2>.expr() = when(this) {
+            is ConcatFieldPath -> expr(this.value)
+            is ConcatExpr -> this.value
+            is ConcatText -> null
+        }
+
+        if (concat.items.size == 0)
+            return null
+
+        if (concat.items.size == 1)
+            return concat.items[0].expr()
+
+        var concatExpr: Expression<String?>? = null
+        for (i in 1 until concat.items.size) {
+            val item0 = concat.items[i - 1]
+            val item1 = concat.items[i]
+            concatExpr = when {
+                i == 1 && item0 is ConcatText && item1 !is ConcatText ->
+                    concat(item0.value, item1.expr())
+                i == 1 && item0 !is ConcatText && item1 is ConcatText ->
+                    concat(item0.expr(), item1.value)
+                i == 1 && item0 !is ConcatText && item1 !is ConcatText ->
+                    concat(item0.expr(), item1.expr())
+                i > 1 && item1 is ConcatText ->
+                    concat(concatExpr, item1.value)
+                i > 1 && item1 !is ConcatText ->
+                    concat(concatExpr, item1.expr())
+                else -> null
+            }
+        }
+        return concatExpr
+    }
+
+    fun <T> fetch(field: KProperty1<T, *>) = fetch(field.path())
+
+    fun <T> fetch(path: FieldPath<T, *>) {
+        // skip fetch for count query
+        if (query.resultType != java.lang.Long::class.java && query.resultType != java.lang.Long::class.javaPrimitiveType) {
             var from: From<*, *> = root
-            for (field in fields.dropLast(1)) {
-                val path = from.get<Any>(field)
-                if (path !in joinsCache) {
-                    joinsCache[path] = from.join<Any, Any>(field)
-                }
-                from = joinsCache[path]!!
-            }
-            return from.get(fields.last())
-        }
-
-        fun fetch(root: Root<T>) {
-            val joinsCache = SHARED_JOINS_CACHE.getOrPut(root) { mutableMapOf() }
-            var from: From<*, *> = root
-            for (field in fields) {
-                val path = from.get<Any>(field)
-                if (path !in joinsCache) {
-                    joinsCache[path] = from.fetch<Any, Any>(field) as From<*, *>
-                }
-                from = joinsCache[path]!!
+            for (field in path.fields) {
+                from = from.fetches.find { it.attribute.name == field } as From<*, *>?
+                        ?: from.fetch<Any, Any>(field) as From<*, *>
             }
         }
     }
+}
 
-    class FieldConcat<T> {
-        private data class Item<S>(val field: FieldPath<S, String?>?, val text: String?)
-        private var items: List<Item<T>> = emptyList()
+class FieldPath<T, R>(field: KProperty1<*, *>, oldPath: FieldPath<T, *>? = null) {
+    val fields: List<String> = oldPath?.fields.orEmpty() + field.name
+}
 
-        fun concat(text: String): FieldConcat<T> {
-            items += Item(null, text)
-            return this
-        }
+sealed class ConcatItem<T>
+class ConcatFieldPath<T>(val value: FieldPath<T, String?>) : ConcatItem<T>()
+class ConcatExpr<T>(val value: Expression<String?>) : ConcatItem<T>()
+class ConcatText<T>(val value: String) : ConcatItem<T>()
 
-        fun concat(vararg fields: FieldPath<T, String?>): FieldConcat<T> {
-            items += fields.map { Item(it, null) }
-            return this
-        }
+class FieldConcat<T> {
 
-        fun concat(vararg props: KProperty1<T, String?>): FieldConcat<T> {
-            items += props.map { Item(path(it), null) }
-            return this
-        }
+    val items: MutableList<ConcatItem<T>> = mutableListOf()
 
-        fun build(root: Root<T>, cb: CriteriaBuilder): Expression<String?>? {
-            when {
-                items.size == 0 ->
-                    return null
-                items.size == 1 && items[0].field != null ->
-                    return items[0].field?.get(root)
-            }
-            var concatExpr: Expression<String?>? = null
-            for (i in 0 until items.size - 1) {
-                val item0 = items[i]
-                val item1 = items[i + 1]
-                when {
-                    concatExpr == null && item0.text != null && item1.field != null ->
-                        concatExpr = cb.concat(item0.text, cb.trim(item1.field.get(root)))
-                    concatExpr == null && item0.field != null && item1.text != null ->
-                        concatExpr = cb.concat(cb.trim(item0.field.get(root)), item1.text)
-                    concatExpr == null && item0.field != null && item1.field != null ->
-                        concatExpr = cb.concat(cb.trim(item0.field.get(root)), cb.trim(item1.field.get(root)))
-                    concatExpr != null && item1.field != null ->
-                        concatExpr = cb.concat(concatExpr, cb.trim(item1.field.get(root)))
-                    concatExpr != null && item1.text != null ->
-                        concatExpr = cb.concat(concatExpr, item1.text)
-                }
-            }
-            return concatExpr
-        }
+    infix fun concat(text: String): FieldConcat<T> {
+        items += ConcatText(text)
+        return this
+    }
+
+    infix fun concat(field: KProperty1<T, String?>): FieldConcat<T> {
+        items += ConcatFieldPath(field.path())
+        return this
+    }
+
+    infix fun concat(path: FieldPath<T, String?>): FieldConcat<T> {
+        items += ConcatFieldPath(path)
+        return this
+    }
+
+    infix fun concat(expr: Expression<String?>): FieldConcat<T> {
+        items += ConcatExpr(expr)
+        return this
     }
 }
